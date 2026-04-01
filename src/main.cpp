@@ -1,5 +1,6 @@
 #include "speaker.h"
 #include "esp_spiffs.h"
+#include "esp_log.h"
 
 void init_spiffs()
 {
@@ -15,9 +16,10 @@ void init_spiffs()
 
 extern "C" void app_main(void)
 {
+
+    ESP_LOGI("MAIN", "Starting app_main...");
     init_spiffs();
 
     Speaker speaker;
-    speaker.read_wav_file("/spiffs/brot15.wav");
-
+    speaker.read_wav_file("/spiffs/boe3.wav");
 }
