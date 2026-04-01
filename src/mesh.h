@@ -12,20 +12,17 @@ public:
 
     void init();
     void send_onoff(uint8_t onoff);
+    bool is_provisioned() const;
 
 private:
-    // Device info
     uint8_t* dev_uuid;
-
-    // Mesh state
     uint16_t net_idx;
     uint16_t app_idx;
+    bool provisioned;
     uint8_t tid;
 
-    // Internal init
     void ble_mesh_init_internal();
 
-    // --- Callbacks ---
     static void prov_complete(uint16_t net_idx, uint16_t addr,
                               uint8_t flags, uint32_t iv_index);
 
@@ -37,4 +34,7 @@ private:
 
     static void ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
                                           esp_ble_mesh_cfg_server_cb_param_t *param);
+
+    static void ble_mesh_generic_client_cb(esp_ble_mesh_generic_client_cb_event_t event,
+                                           esp_ble_mesh_generic_client_cb_param_t *param);
 };

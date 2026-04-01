@@ -1,21 +1,16 @@
 #include "mesh.h"
 #include "board.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
 
 #include "esp_ble_mesh_common_api.h"
 #include "esp_ble_mesh_networking_api.h"
 #include "esp_ble_mesh_provisioning_api.h"
 #include "esp_ble_mesh_config_model_api.h"
 #include "esp_ble_mesh_generic_model_api.h"
-#include "esp_ble_mesh_local_data_operation_api.h"
 
 #define TAG "MESH_NODE"
 #define CID_ESP 0x02E5
-
-extern struct _led_state led_state[3];
-
-// ================= CONFIG =================
+#define GROUP_ADDR 0xC000
 
 static esp_ble_mesh_cfg_srv_t config_server = {
     .net_transmit = ESP_BLE_MESH_TRANSMIT(2, 20),
@@ -35,7 +30,8 @@ static esp_ble_mesh_cfg_srv_t config_server = {
     .default_ttl = 7,
 };
 
-ESP_BLE_MESH_MODEL_PUB_DEFINE(onoff_pub, 2 + 3, ROLE_NODE);
+ESP_BLE_MESH_MODEL_PUB_DEFINE(onoff_pub_srv, 2 + 3, ROLE_NODE);
+ESP_BLE_MESH_MODEL_PUB_DEFINE(onoff_pub_cli, 2 + 3, ROLE_NODE);
 
 static esp_ble_mesh_gen_onoff_srv_t onoff_server = {
     .rsp_ctrl = {
@@ -44,14 +40,12 @@ static esp_ble_mesh_gen_onoff_srv_t onoff_server = {
     },
 };
 
-// ⚠️ BELANGRIJK: model pointer nodig voor client send
-static esp_ble_mesh_model_t *onoff_model_ptr = nullptr;
-
-// ================= COMPOSITION =================
+static esp_ble_mesh_client_t onoff_client = {};
 
 static esp_ble_mesh_model_t root_models[] = {
     ESP_BLE_MESH_MODEL_CFG_SRV(&config_server),
-    ESP_BLE_MESH_MODEL_GEN_ONOFF_SRV(&onoff_pub, &onoff_server),
+    ESP_BLE_MESH_MODEL_GEN_ONOFF_SRV(&onoff_pub_srv, &onoff_server),
+    ESP_BLE_MESH_MODEL_GEN_ONOFF_CLI(&onoff_pub_cli, &onoff_client),
 };
 
 static esp_ble_mesh_elem_t elements[] = {
@@ -64,30 +58,32 @@ static esp_ble_mesh_comp_t composition = {
     .elements = elements,
 };
 
-static esp_ble_mesh_prov_t provision;
-
-// ================= CLASS =================
+static esp_ble_mesh_prov_t provision = {};
+static mesh *g_mesh = nullptr;
 
 mesh::mesh(uint8_t *uuid)
-    : dev_uuid(uuid), net_idx(0xFFFF), app_idx(0xFFFF), tid(0)
+    : dev_uuid(uuid), net_idx(0xFFFF), app_idx(0xFFFF), provisioned(false), tid(0)
 {
     provision.uuid = dev_uuid;
     provision.output_size = 0;
     provision.output_actions = 0;
 }
 
+bool mesh::is_provisioned() const
+{
+    return provisioned;
+}
+
 void mesh::init()
 {
+    g_mesh = this;
+
     esp_ble_mesh_register_prov_callback(mesh::ble_mesh_provisioning_cb);
     esp_ble_mesh_register_config_server_callback(mesh::ble_mesh_config_server_cb);
     esp_ble_mesh_register_generic_server_callback(mesh::ble_mesh_generic_server_cb);
+    esp_ble_mesh_register_generic_client_callback(mesh::ble_mesh_generic_client_cb);
 
     ble_mesh_init_internal();
-
-    // Save pointer to model for later use
-    onoff_model_ptr = &root_models[1];
-
-    board_led_operation(LED_G, LED_ON);
 }
 
 void mesh::ble_mesh_init_internal()
@@ -98,18 +94,27 @@ void mesh::ble_mesh_init_internal()
         return;
     }
 
-    esp_ble_mesh_node_prov_enable(ESP_BLE_MESH_PROV_ADV);
-    esp_ble_mesh_node_prov_enable(ESP_BLE_MESH_PROV_GATT);
+    err = esp_ble_mesh_node_prov_enable(
+        (esp_ble_mesh_prov_bearer_t)(ESP_BLE_MESH_PROV_ADV | ESP_BLE_MESH_PROV_GATT));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable mesh node (err %d)", err);
+        return;
+    }
 
-    ESP_LOGI(TAG, "BLE Mesh Node initialized");
+    ESP_LOGI(TAG, "BLE Mesh node initialized");
 }
-
-// ================= SEND =================
 
 void mesh::send_onoff(uint8_t onoff)
 {
-    if (!onoff_model_ptr) {
-        ESP_LOGE(TAG, "Model not initialized");
+    board_set_led(onoff ? LED_ON : LED_OFF);
+
+    if (!g_mesh || !g_mesh->provisioned) {
+        ESP_LOGW(TAG, "Not provisioned yet, only local LED updated");
+        return;
+    }
+
+    if (g_mesh->app_idx == ESP_BLE_MESH_KEY_UNUSED) {
+        ESP_LOGE(TAG, "AppKey not bound yet, cannot send");
         return;
     }
 
@@ -117,10 +122,10 @@ void mesh::send_onoff(uint8_t onoff)
     esp_ble_mesh_generic_client_set_state_t set = {};
 
     common.opcode = ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK;
-    common.model = onoff_model_ptr;
-    common.ctx.net_idx = net_idx;
-    common.ctx.app_idx = app_idx;
-    common.ctx.addr = 0xFFFF;
+    common.model = &root_models[2];
+    common.ctx.net_idx = g_mesh->net_idx;
+    common.ctx.app_idx = g_mesh->app_idx;
+    common.ctx.addr = GROUP_ADDR;
     common.ctx.send_ttl = 3;
     common.msg_timeout = 0;
 
@@ -129,26 +134,45 @@ void mesh::send_onoff(uint8_t onoff)
     set.onoff_set.tid = tid++;
 
     esp_err_t err = esp_ble_mesh_generic_client_set_state(&common, &set);
-    if (err) {
-        ESP_LOGE(TAG, "Send OnOff failed (err %d)", err);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Client set failed (err %d)", err);
+    } else {
+        ESP_LOGI(TAG, "Sent ONOFF=%d to group 0x%04x", onoff, GROUP_ADDR);
     }
 }
 
-// ================= CALLBACKS =================
-
 void mesh::prov_complete(uint16_t net_idx, uint16_t addr, uint8_t flags, uint32_t iv_index)
 {
-    ESP_LOGI(TAG, "Provision complete: addr 0x%04x", addr);
+    if (!g_mesh) {
+        return;
+    }
+
+    g_mesh->net_idx = net_idx;
+    g_mesh->app_idx = 0x0000;
+    g_mesh->provisioned = true;
+
+    ESP_LOGI(TAG, "Provision complete addr=0x%04x", addr);
+    board_set_led(LED_OFF);
 }
 
 void mesh::ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
                                     esp_ble_mesh_prov_cb_param_t *param)
 {
-    if (event == ESP_BLE_MESH_NODE_PROV_COMPLETE_EVT) {
-        mesh::prov_complete(param->node_prov_complete.net_idx,
-                            param->node_prov_complete.addr,
-                            param->node_prov_complete.flags,
-                            param->node_prov_complete.iv_index);
+    switch (event) {
+    case ESP_BLE_MESH_PROV_REGISTER_COMP_EVT:
+        ESP_LOGI(TAG, "Provision register complete");
+        break;
+    case ESP_BLE_MESH_NODE_PROV_ENABLE_COMP_EVT:
+        ESP_LOGI(TAG, "Provision enable complete");
+        break;
+    case ESP_BLE_MESH_NODE_PROV_COMPLETE_EVT:
+        prov_complete(param->node_prov_complete.net_idx,
+                      param->node_prov_complete.addr,
+                      param->node_prov_complete.flags,
+                      param->node_prov_complete.iv_index);
+        break;
+    default:
+        break;
     }
 }
 
@@ -156,22 +180,57 @@ void mesh::ble_mesh_generic_server_cb(esp_ble_mesh_generic_server_cb_event_t eve
                                       esp_ble_mesh_generic_server_cb_param_t *param)
 {
     if (event == ESP_BLE_MESH_GENERIC_SERVER_STATE_CHANGE_EVT) {
-
         if (param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET ||
-            param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK)
-        {
-            uint16_t primary_addr = esp_ble_mesh_get_primary_element_address();
+            param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK) {
 
-            if (param->ctx.addr != primary_addr) {
-                board_led_operation(LED_R,
-                    param->value.state_change.onoff_set.onoff);
+            uint8_t onoff = param->value.state_change.onoff_set.onoff;
+
+            ESP_LOGI(TAG, "Received ONOFF=%d from src 0x%04x dst 0x%04x",
+                     onoff, param->ctx.addr, param->ctx.recv_dst);
+
+            board_set_led(onoff ? LED_ON : LED_OFF);
             }
-        }
     }
+}
+
+void mesh::ble_mesh_generic_client_cb(esp_ble_mesh_generic_client_cb_event_t event,
+                                      esp_ble_mesh_generic_client_cb_param_t *param)
+{
+    ESP_LOGI(TAG, "Generic client event %d, error %d", event,
+             param ? param->error_code : -1);
 }
 
 void mesh::ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
                                      esp_ble_mesh_cfg_server_cb_param_t *param)
 {
-    // optional
+    if (event != ESP_BLE_MESH_CFG_SERVER_STATE_CHANGE_EVT) {
+        return;
+    }
+
+    switch (param->ctx.recv_op) {
+        case ESP_BLE_MESH_MODEL_OP_APP_KEY_ADD:
+            ESP_LOGI(TAG, "AppKey added: net_idx=0x%04x app_idx=0x%04x",
+                     param->value.state_change.appkey_add.net_idx,
+                     param->value.state_change.appkey_add.app_idx);
+            break;
+
+        case ESP_BLE_MESH_MODEL_OP_MODEL_APP_BIND:
+            ESP_LOGI(TAG, "Model app bind: elem_addr=0x%04x app_idx=0x%04x cid=0x%04x mod_id=0x%04x",
+                     param->value.state_change.mod_app_bind.element_addr,
+                     param->value.state_change.mod_app_bind.app_idx,
+                     param->value.state_change.mod_app_bind.company_id,
+                     param->value.state_change.mod_app_bind.model_id);
+
+            if (param->value.state_change.mod_app_bind.company_id == 0xFFFF &&
+                param->value.state_change.mod_app_bind.model_id == ESP_BLE_MESH_MODEL_ID_GEN_ONOFF_CLI) {
+                if (g_mesh) {
+                    g_mesh->app_idx = param->value.state_change.mod_app_bind.app_idx;
+                    ESP_LOGI(TAG, "Stored AppKey index 0x%04x", g_mesh->app_idx);
+                }
+                }
+            break;
+
+        default:
+            break;
+    }
 }
