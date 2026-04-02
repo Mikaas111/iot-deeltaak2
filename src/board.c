@@ -1,5 +1,3 @@
-/* board.c - Board-specific hooks */
-
 #include <stdio.h>
 
 #include "driver/gpio.h"
@@ -35,6 +33,11 @@ void board_led_operation(uint8_t pin, uint8_t onoff)
 void board_set_led(uint8_t onoff)
 {
     board_led_operation(LED_PIN, onoff);
+}
+
+bool board_is_led_on(void)
+{
+    return led_state[0].current == LED_ON;
 }
 
 static void board_led_init(void)

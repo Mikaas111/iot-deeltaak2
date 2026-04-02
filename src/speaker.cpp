@@ -5,11 +5,12 @@
 #include <cstring>
 
 #include "speaker.h"
+#include "board.h"
 #include "esp_log.h"
 #include "driver/i2c.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "esp_timer.h"
+#include "esp_rom_sys.h"
+#include "driver/gpio.h"
 
 #define TAG "SPEAKER"
 
@@ -38,25 +39,6 @@ struct __attribute__((packed)) Twavheader
     char sub_chunk2_ID[4];
     uint32_t sub_chunk2_size;
 };
-
-static uint32_t get_file_offset_of_data(std::ifstream &wavfile)
-{
-    Twavheader wav{};
-    wavfile.read(reinterpret_cast<char*>(&wav), sizeof(Twavheader));
-    if (!wavfile || std::string(wav.chunk_ID, 4) != "RIFF" || std::string(wav.format, 4) != "WAVE") {
-        return 0;
-    }
-
-    if (std::string(wav.sub_chunk1_ID, 4) != "fmt " || std::string(wav.sub_chunk2_ID, 4) != "data") {
-        return 0;
-    }
-
-    if (wav.audio_format != 1 || wav.num_channels != 1 || wav.sample_rate != 8000 || wav.bits_per_sample != 8) {
-        return 0;
-    }
-
-    return sizeof(Twavheader);
-}
 
 esp_err_t speaker::i2c_init()
 {
@@ -167,8 +149,9 @@ esp_err_t speaker::play_wav_file(const std::string& fname)
              (unsigned)wav.num_channels,
              (unsigned long)wav.sub_chunk2_size);
 
-    std::vector<uint8_t> audio_data(wav.sub_chunk2_size);
-    wavfile.read(reinterpret_cast<char*>(audio_data.data()), wav.sub_chunk2_size);
+    std::vector<uint8_t> audio_data(static_cast<size_t>(wav.sub_chunk2_size));
+    wavfile.read(reinterpret_cast<char*>(audio_data.data()),
+                 static_cast<std::streamsize>(audio_data.size()));
 
     if (!wavfile) {
         ESP_LOGE(TAG, "Failed to read WAV data");
@@ -181,14 +164,18 @@ esp_err_t speaker::play_wav_file(const std::string& fname)
     int64_t next_tick = esp_timer_get_time();
 
     for (size_t i = 0; i < audio_data.size(); ++i) {
-        uint8_t s = audio_data[i];
+        if (!board_is_led_on()) {
+            ESP_LOGI(TAG, "LED turned off, stopping playback");
+            return ESP_ERR_INVALID_STATE;
+        }
 
-        // 8-bit unsigned PCM -> 12-bit DAC
+        uint8_t s = audio_data[i];
         uint16_t dac_value = static_cast<uint16_t>(s) << 4;
 
         err = mcp4725_write(dac_value);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "MCP4725 write failed at sample %u: %s", (unsigned)i, esp_err_to_name(err));
+            ESP_LOGE(TAG, "MCP4725 write failed at sample %u: %s",
+                     (unsigned)i, esp_err_to_name(err));
             return err;
         }
 

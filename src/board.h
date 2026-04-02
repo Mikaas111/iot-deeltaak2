@@ -1,11 +1,13 @@
-#ifndef _BOARD_H_
-#define _BOARD_H_
+#ifndef BOARD_H
+#define BOARD_H
 
 #ifdef __cplusplus
 extern "C" {
-#endif /**< __cplusplus */
+#endif
 
 #include "driver/gpio.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifndef LED_PIN
 #define LED_PIN 2
@@ -16,21 +18,21 @@ extern "C" {
 
 #define INPUT_PIN 14
 
-    bool board_is_input_high(void);
-    void board_init(void);
-    void board_set_led(uint8_t onoff);
-
     struct _led_state {
         uint8_t current;
         uint8_t previous;
         uint8_t pin;
-        char *name;
+        const char *name;
     };
 
+    bool board_is_input_high(void);
+    bool board_is_led_on(void);
+    void board_init(void);
+    void board_set_led(uint8_t onoff);
     void board_led_operation(uint8_t pin, uint8_t onoff);
 
 #ifdef __cplusplus
 }
-#endif /**< __cplusplus */
+#endif
 
-#endif /* _BOARD_H_ */
+#endif /* BOARD_H */

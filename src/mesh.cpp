@@ -189,15 +189,15 @@ void mesh::ble_mesh_generic_server_cb(esp_ble_mesh_generic_server_cb_event_t eve
                      onoff, param->ctx.addr, param->ctx.recv_dst);
 
             board_set_led(onoff ? LED_ON : LED_OFF);
-            }
+        }
     }
 }
 
 void mesh::ble_mesh_generic_client_cb(esp_ble_mesh_generic_client_cb_event_t event,
                                       esp_ble_mesh_generic_client_cb_param_t *param)
 {
-    ESP_LOGI(TAG, "Generic client event %d, error %d", event,
-             param ? param->error_code : -1);
+    ESP_LOGI(TAG, "Generic client event %d, error %d",
+             event, param ? param->error_code : -1);
 }
 
 void mesh::ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
@@ -208,29 +208,29 @@ void mesh::ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
     }
 
     switch (param->ctx.recv_op) {
-        case ESP_BLE_MESH_MODEL_OP_APP_KEY_ADD:
-            ESP_LOGI(TAG, "AppKey added: net_idx=0x%04x app_idx=0x%04x",
-                     param->value.state_change.appkey_add.net_idx,
-                     param->value.state_change.appkey_add.app_idx);
-            break;
+    case ESP_BLE_MESH_MODEL_OP_APP_KEY_ADD:
+        ESP_LOGI(TAG, "AppKey added: net_idx=0x%04x app_idx=0x%04x",
+                 param->value.state_change.appkey_add.net_idx,
+                 param->value.state_change.appkey_add.app_idx);
+        break;
 
-        case ESP_BLE_MESH_MODEL_OP_MODEL_APP_BIND:
-            ESP_LOGI(TAG, "Model app bind: elem_addr=0x%04x app_idx=0x%04x cid=0x%04x mod_id=0x%04x",
-                     param->value.state_change.mod_app_bind.element_addr,
-                     param->value.state_change.mod_app_bind.app_idx,
-                     param->value.state_change.mod_app_bind.company_id,
-                     param->value.state_change.mod_app_bind.model_id);
+    case ESP_BLE_MESH_MODEL_OP_MODEL_APP_BIND:
+        ESP_LOGI(TAG, "Model app bind: elem_addr=0x%04x app_idx=0x%04x cid=0x%04x mod_id=0x%04x",
+                 param->value.state_change.mod_app_bind.element_addr,
+                 param->value.state_change.mod_app_bind.app_idx,
+                 param->value.state_change.mod_app_bind.company_id,
+                 param->value.state_change.mod_app_bind.model_id);
 
-            if (param->value.state_change.mod_app_bind.company_id == 0xFFFF &&
-                param->value.state_change.mod_app_bind.model_id == ESP_BLE_MESH_MODEL_ID_GEN_ONOFF_CLI) {
-                if (g_mesh) {
-                    g_mesh->app_idx = param->value.state_change.mod_app_bind.app_idx;
-                    ESP_LOGI(TAG, "Stored AppKey index 0x%04x", g_mesh->app_idx);
-                }
-                }
-            break;
+        if (param->value.state_change.mod_app_bind.company_id == 0xFFFF &&
+            param->value.state_change.mod_app_bind.model_id == ESP_BLE_MESH_MODEL_ID_GEN_ONOFF_CLI) {
+            if (g_mesh) {
+                g_mesh->app_idx = param->value.state_change.mod_app_bind.app_idx;
+                ESP_LOGI(TAG, "Stored AppKey index 0x%04x", g_mesh->app_idx);
+            }
+        }
+        break;
 
-        default:
-            break;
+    default:
+        break;
     }
 }

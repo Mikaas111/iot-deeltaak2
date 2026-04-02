@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "esp_err.h"
 #include "esp_ble_mesh_defs.h"
 #include "esp_ble_mesh_provisioning_api.h"
 #include "esp_ble_mesh_config_model_api.h"
@@ -8,14 +9,14 @@
 
 class mesh {
 public:
-    mesh(uint8_t* uuid);
+    explicit mesh(uint8_t *uuid);
 
     void init();
     void send_onoff(uint8_t onoff);
     bool is_provisioned() const;
 
 private:
-    uint8_t* dev_uuid;
+    uint8_t *dev_uuid;
     uint16_t net_idx;
     uint16_t app_idx;
     bool provisioned;
