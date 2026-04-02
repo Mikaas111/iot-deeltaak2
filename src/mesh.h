@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include "esp_err.h"
 #include "esp_ble_mesh_defs.h"
 #include "esp_ble_mesh_provisioning_api.h"
@@ -9,11 +10,14 @@
 
 class mesh {
 public:
+    using onoff_callback_t = std::function<void(uint8_t onoff)>;
+
     explicit mesh(uint8_t *uuid);
 
     void init();
     void send_onoff(uint8_t onoff);
     bool is_provisioned() const;
+    void set_onoff_callback(onoff_callback_t cb);
 
 private:
     uint8_t *dev_uuid;
@@ -21,6 +25,8 @@ private:
     uint16_t app_idx;
     bool provisioned;
     uint8_t tid;
+
+    onoff_callback_t onoff_callback_;
 
     void ble_mesh_init_internal();
 

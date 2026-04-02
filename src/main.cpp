@@ -2,6 +2,7 @@
 #include "mesh.h"
 #include "ble_mesh_example_init.h"
 #include "speaker.h"
+#include "ping.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -9,12 +10,21 @@
 #include "esp_log.h"
 #include "esp_spiffs.h"
 #include "esp_err.h"
+#include "esp_timer.h"
+
+#include <atomic>
 
 static const char *TAG = "MAIN";
 
 static uint8_t dev_uuid[16] = {0xdd, 0xdd};
 static mesh mesh_node(dev_uuid);
 static speaker audio_speaker;
+
+// Pas deze GPIO’s aan naar jouw bekabeling
+static ping ping_sensor(GPIO_NUM_16, GPIO_NUM_15, 20.0f, 5000);
+
+static std::atomic<bool> g_detection_active{false};
+static std::atomic<int64_t> g_last_detect_us{-1};
 
 static void init_spiffs()
 {
@@ -43,6 +53,75 @@ static void init_spiffs()
     }
 }
 
+static void set_output_state(bool on)
+{
+    uint8_t value = on ? LED_ON : LED_OFF;
+    board_set_led(value);
+    mesh_node.send_onoff(value);
+}
+
+static void ping_presence_callback(bool present)
+{
+    if (!present) {
+        return;
+    }
+
+    g_last_detect_us.store(esp_timer_get_time());
+    g_detection_active.store(true);
+
+    set_output_state(true);
+}
+
+static void ping_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    static constexpr int64_t HOLD_US = 5000000; // 5 sec
+
+    for (;;) {
+        ping_sensor.update();
+
+        if (g_detection_active.load()) {
+            int64_t last = g_last_detect_us.load();
+            if (last > 0) {
+                int64_t now = esp_timer_get_time();
+                if ((now - last) >= HOLD_US) {
+                    // timeout voorbij: alles uit
+                    g_detection_active.store(false);
+                    g_last_detect_us.store(-1);
+
+                    set_output_state(false);
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+static void input_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    bool last_state = board_is_input_high();
+
+    for (;;) {
+        bool curr = board_is_input_high();
+
+        if (curr != last_state) {
+            ESP_LOGI(TAG, "INPUT_PIN changed: %d", curr);
+
+            uint8_t value = curr ? LED_ON : LED_OFF;
+            board_set_led(value);
+            mesh_node.send_onoff(value);
+
+            last_state = curr;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 static void audio_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -53,36 +132,13 @@ static void audio_task(void *pvParameters)
             continue;
         }
 
-        ESP_LOGI(TAG, "Starting playback cycle...");
+        ESP_LOGI(TAG, "Starting playback...");
         esp_err_t err = audio_speaker.play_wav_file("/spiffs/audio4.wav");
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Playback stopped/failed: %s", esp_err_to_name(err));
+            ESP_LOGW(TAG, "Playback stopped/failed: %s", esp_err_to_name(err));
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-
-static void pin_monitor_task(void *pvParameters)
-{
-    (void)pvParameters;
-
-    bool last_state = board_is_input_high();
-
-    for (;;) {
-        bool curr = board_is_input_high();
-
-        if (curr != last_state) {
-            ESP_LOGI(TAG, "GPIO14 changed: %d", curr);
-
-            uint8_t led_value = curr ? LED_ON : LED_OFF;
-            board_set_led(led_value);
-            mesh_node.send_onoff(led_value);
-
-            last_state = curr;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 
@@ -115,6 +171,15 @@ extern "C" void app_main(void)
     ble_mesh_get_dev_uuid(dev_uuid);
     mesh_node.init();
 
+    err = ping_sensor.init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ping sensor init failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ping_sensor.set_presence_callback(ping_presence_callback);
+
+    xTaskCreate(input_task, "InputTask", 4096, nullptr, 5, nullptr);
+    xTaskCreate(ping_task, "PingTask", 4096, nullptr, 5, nullptr);
     xTaskCreate(audio_task, "AudioTask", 6144, nullptr, 5, nullptr);
-    xTaskCreate(pin_monitor_task, "PinMon", 4096, nullptr, 5, nullptr);
 }
