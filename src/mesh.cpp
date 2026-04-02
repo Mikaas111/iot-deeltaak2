@@ -74,6 +74,11 @@ bool mesh::is_provisioned() const
     return provisioned;
 }
 
+void mesh::set_onoff_callback(onoff_callback_t cb)
+{
+    onoff_callback_ = std::move(cb);
+}
+
 void mesh::init()
 {
     g_mesh = this;
@@ -179,17 +184,30 @@ void mesh::ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
 void mesh::ble_mesh_generic_server_cb(esp_ble_mesh_generic_server_cb_event_t event,
                                       esp_ble_mesh_generic_server_cb_param_t *param)
 {
-    if (event == ESP_BLE_MESH_GENERIC_SERVER_STATE_CHANGE_EVT) {
-        if (param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET ||
-            param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK) {
+    if (event != ESP_BLE_MESH_GENERIC_SERVER_STATE_CHANGE_EVT) {
+        return;
+    }
 
-            uint8_t onoff = param->value.state_change.onoff_set.onoff;
+    if (param->ctx.recv_op != ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET &&
+        param->ctx.recv_op != ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK) {
+        return;
+    }
 
-            ESP_LOGI(TAG, "Received ONOFF=%d from src 0x%04x dst 0x%04x",
-                     onoff, param->ctx.addr, param->ctx.recv_dst);
+    uint8_t onoff = param->value.state_change.onoff_set.onoff;
 
-            board_set_led(onoff ? LED_ON : LED_OFF);
-        }
+    ESP_LOGI(TAG, "Received ONOFF=%d from src 0x%04x dst 0x%04x",
+             onoff, param->ctx.addr, param->ctx.recv_dst);
+
+    board_set_led(onoff ? LED_ON : LED_OFF);
+
+    // Negeer berichten die door onszelf zijn verzonden via send_onoff()
+    if (g_mesh && param->ctx.addr == g_mesh->net_idx) {
+        ESP_LOGI(TAG, "Ignoring self-generated ONOFF message");
+        return;
+    }
+
+    if (g_mesh && g_mesh->onoff_callback_) {
+        g_mesh->onoff_callback_(onoff);
     }
 }
 
