@@ -1,4 +1,4 @@
-#include "board.h"
+#include "led.h"
 #include "mesh.h"
 #include "ble_mesh_example_init.h"
 #include "speaker.h"
@@ -7,14 +7,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
-#include "esp_log.h"
 #include "esp_spiffs.h"
-#include "esp_err.h"
 #include "esp_timer.h"
 
 #include <atomic>
-
-static const char *TAG = "MAIN";
 
 static uint8_t dev_uuid[16] = {0xdd, 0xdd};
 static mesh mesh_node(dev_uuid);
@@ -35,48 +31,31 @@ static void init_spiffs()
         .format_if_mount_failed = true
     };
 
-    esp_err_t err = esp_vfs_spiffs_register(&conf);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SPIFFS init failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    size_t total = 0;
-    size_t used = 0;
-    err = esp_spiffs_info(nullptr, &total, &used);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "SPIFFS mounted: total=%u used=%u",
-                 static_cast<unsigned>(total),
-                 static_cast<unsigned>(used));
-    } else {
-        ESP_LOGW(TAG, "Could not read SPIFFS info: %s", esp_err_to_name(err));
-    }
+    esp_vfs_spiffs_register(&conf);
 }
 
-static void set_output_state(bool on)
+static void aanOfUit(bool on)
 {
     uint8_t value = on ? LED_ON : LED_OFF;
-    board_set_led(value);
+    setLed(value);
     mesh_node.send_onoff(value);
 }
 
-static void ping_presence_callback(bool present)
+static void pingDetectieInterval(bool present)
 {
-    if (!present) {
-        return;
-    }
+    if (!present) return;
 
     g_last_detect_us.store(esp_timer_get_time());
     g_detection_active.store(true);
 
-    set_output_state(true);
+    aanOfUit(true);
 }
 
-static void ping_task(void *pvParameters)
+static void pingTaak(void *pvParameters)
 {
     (void)pvParameters;
 
-    static constexpr int64_t HOLD_US = 5000000; // 5 sec
+    static constexpr int64_t HOLD_US = 5000000;
 
     for (;;) {
         ping_sensor.update();
@@ -86,11 +65,9 @@ static void ping_task(void *pvParameters)
             if (last > 0) {
                 int64_t now = esp_timer_get_time();
                 if ((now - last) >= HOLD_US) {
-                    // timeout voorbij: alles uit
                     g_detection_active.store(false);
                     g_last_detect_us.store(-1);
-
-                    set_output_state(false);
+                    aanOfUit(false);
                 }
             }
         }
@@ -99,7 +76,7 @@ static void ping_task(void *pvParameters)
     }
 }
 
-static void input_task(void *pvParameters)
+static void knopTaak(void *pvParameters)
 {
     (void)pvParameters;
 
@@ -109,12 +86,9 @@ static void input_task(void *pvParameters)
         bool curr = board_is_input_high();
 
         if (curr != last_state) {
-            ESP_LOGI(TAG, "INPUT_PIN changed: %d", curr);
-
             uint8_t value = curr ? LED_ON : LED_OFF;
-            board_set_led(value);
+            setLed(value);
             mesh_node.send_onoff(value);
-
             last_state = curr;
         }
 
@@ -122,21 +96,17 @@ static void input_task(void *pvParameters)
     }
 }
 
-static void audio_task(void *pvParameters)
+static void audioTaak(void *pvParameters)
 {
     (void)pvParameters;
 
     for (;;) {
-        if (!board_is_led_on()) {
+        if (!isLedAan()) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
 
-        ESP_LOGI(TAG, "Starting playback...");
-        esp_err_t err = audio_speaker.play_wav_file("/spiffs/audio4.wav");
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Playback stopped/failed: %s", esp_err_to_name(err));
-        }
+        audio_speaker.playWavFile("/spiffs/audio4.wav");
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -144,42 +114,21 @@ static void audio_task(void *pvParameters)
 
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "Starting app_main...");
-
     board_init();
 
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
-    }
-
+    nvs_flash_init();
     init_spiffs();
 
-    err = audio_speaker.init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Speaker init failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    err = bluetooth_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "bluetooth_init failed: %s", esp_err_to_name(err));
-        return;
-    }
+    audio_speaker.init();
+    bluetooth_init();
 
     ble_mesh_get_dev_uuid(dev_uuid);
     mesh_node.init();
 
-    err = ping_sensor.init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Ping sensor init failed: %s", esp_err_to_name(err));
-        return;
-    }
+    ping_sensor.init();
+    ping_sensor.set_presence_callback(pingDetectieInterval);
 
-    ping_sensor.set_presence_callback(ping_presence_callback);
-
-    xTaskCreate(input_task, "InputTask", 4096, nullptr, 5, nullptr);
-    xTaskCreate(ping_task, "PingTask", 4096, nullptr, 5, nullptr);
-    xTaskCreate(audio_task, "AudioTask", 6144, nullptr, 5, nullptr);
+    xTaskCreate(knopTaak, "knopTaak", 4096, nullptr, 5, nullptr);
+    xTaskCreate(pingTaak, "pingTaak", 4096, nullptr, 5, nullptr);
+    xTaskCreate(audioTaak, "audioTaak", 6144, nullptr, 5, nullptr);
 }

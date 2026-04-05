@@ -1,14 +1,11 @@
 #include "ping.h"
 
-#include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_rom_sys.h"
 
-#define TAG "PING_SENSOR"
-
 static constexpr int64_t TRIGGER_PULSE_US = 10;
 static constexpr int64_t ECHO_TIMEOUT_US = 30000;
-static constexpr int64_t MEASURE_INTERVAL_US = 100000; // 100 ms
+static constexpr int64_t MEASURE_INTERVAL_US = 100000;
 
 ping::ping(gpio_num_t trig_pin,
            gpio_num_t echo_pin,
@@ -55,9 +52,6 @@ esp_err_t ping::init()
     echo_fall_us_ = 0;
     echo_done_ = false;
 
-    ESP_LOGI(TAG, "Ping sensor initialized: trig=%d echo=%d threshold=%.1f cm",
-             (int)trig_pin_, (int)echo_pin_, threshold_cm_);
-
     return ESP_OK;
 }
 
@@ -66,7 +60,7 @@ void ping::set_presence_callback(presence_callback_t cb)
     presence_callback_ = std::move(cb);
 }
 
-void ping::set_enabled(bool enabled)
+void ping::setAan(bool enabled)
 {
     enabled_ = enabled;
     if (!enabled_) {
@@ -75,16 +69,13 @@ void ping::set_enabled(bool enabled)
     }
 }
 
-bool ping::is_enabled() const
+bool ping::isAan() const
 {
     return enabled_;
 }
 
-void ping::set_presence(bool present)
+void ping::setStatus(bool present)
 {
-    // BELANGRIJK:
-    // niet alleen bij statusverandering melden, maar altijd bij present=true
-    // zodat de 5s timer in main opnieuw gereset wordt zolang er iets dichtbij staat.
     object_present_ = present;
 
     if (presence_callback_) {
@@ -92,7 +83,7 @@ void ping::set_presence(bool present)
     }
 }
 
-void ping::start_measurement()
+void ping::startMeting()
 {
     echo_done_ = false;
     echo_rise_us_ = 0;
@@ -124,11 +115,8 @@ void ping::finish_measurement(int64_t pulse_us)
         return;
     }
 
-    ESP_LOGI(TAG, "Distance: %.2f cm", distance_cm);
-
     if (distance_cm <= threshold_cm_) {
-        // Elke keer opnieuw melden als hij dichtbij is
-        set_presence(true);
+        setStatus(true);
     }
 
     last_measure_us_ = esp_timer_get_time();
@@ -141,31 +129,16 @@ void ping::echo_isr_handler(void *arg)
     self->handle_echo_edge();
 }
 
-void ping::handle_echo_edge()
-{
-    int level = gpio_get_level(echo_pin_);
-    int64_t now = esp_timer_get_time();
-
-    if (level == 1) {
-        echo_rise_us_ = now;
-    } else {
-        echo_fall_us_ = now;
-        echo_done_ = true;
-    }
-}
-
 void ping::update()
 {
-    if (!enabled_) {
-        return;
-    }
+    if (!enabled_) return;
 
     int64_t now = esp_timer_get_time();
 
     switch (state_) {
     case State::IDLE:
         if ((now - last_measure_us_) >= MEASURE_INTERVAL_US) {
-            start_measurement();
+            startMeting();
         }
         break;
 

@@ -18,8 +18,8 @@ public:
     void update();
 
     void set_presence_callback(presence_callback_t cb);
-    void set_enabled(bool enabled);
-    bool is_enabled() const;
+    void setAan(bool enabled);
+    bool isAan() const;
 
 private:
     enum class State {
@@ -46,9 +46,9 @@ private:
 
     presence_callback_t presence_callback_;
 
-    void start_measurement();
+    void startMeting();
     void finish_measurement(int64_t pulse_us);
-    void set_presence(bool present);
+    void setStatus(bool present);
 
     static void echo_isr_handler(void *arg);
     void handle_echo_edge();

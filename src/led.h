@@ -26,10 +26,10 @@ extern "C" {
     };
 
     bool board_is_input_high(void);
-    bool board_is_led_on(void);
+    bool isLedAan(void);
     void board_init(void);
-    void board_set_led(uint8_t onoff);
-    void board_led_operation(uint8_t pin, uint8_t onoff);
+    void setLed(uint8_t onoff);
+    void led(uint8_t pin, uint8_t onoff);
 
 #ifdef __cplusplus
 }

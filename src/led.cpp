@@ -1,16 +1,13 @@
 #include <stdio.h>
 
 #include "driver/gpio.h"
-#include "esp_log.h"
-#include "board.h"
-
-#define TAG "BOARD"
+#include "led.h"
 
 struct _led_state led_state[1] = {
     { LED_OFF, LED_OFF, LED_PIN, "led" },
 };
 
-void board_led_operation(uint8_t pin, uint8_t onoff)
+void led(uint8_t pin, uint8_t onoff)
 {
     for (int i = 0; i < 1; i++) {
         if (led_state[i].pin != pin) {
@@ -26,21 +23,19 @@ void board_led_operation(uint8_t pin, uint8_t onoff)
         led_state[i].current = onoff;
         return;
     }
-
-    ESP_LOGE(TAG, "LED is not found!");
 }
 
-void board_set_led(uint8_t onoff)
+void setLed(uint8_t onoff)
 {
-    board_led_operation(LED_PIN, onoff);
+    led(LED_PIN, onoff);
 }
 
-bool board_is_led_on(void)
+bool isLedAan(void)
 {
     return led_state[0].current == LED_ON;
 }
 
-static void board_led_init(void)
+static void led_init(void)
 {
     gpio_reset_pin(LED_PIN);
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
@@ -51,7 +46,7 @@ static void board_led_init(void)
 
 void board_init(void)
 {
-    board_led_init();
+    led_init();
 
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_DISABLE;
@@ -64,7 +59,7 @@ void board_init(void)
     gpio_set_level(LED_PIN, LED_OFF);
 }
 
-bool board_is_input_high(void)
+bool isKnopAan(void)
 {
     return gpio_get_level(INPUT_PIN) == 1;
 }
